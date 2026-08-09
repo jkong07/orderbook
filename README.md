@@ -4,7 +4,7 @@ A low-latency limit order book and market data feed handler, prototyped in Pytho
 
 ## Why I built this
 
-My other projects (a MATH-benchmark LLM prompting eval, an options pricing engine) are numerical and scripting-heavy — they don't touch the systems-engineering side of quant/trading infrastructure. This project is meant to close that gap: memory layout, cache behavior, lock-free structures, latency measurement, and binary protocol parsing, built and benchmarked incrementally rather than assumed.
+I like working at the level where memory layout and cache behavior actually decide performance instead of being an afterthought. An order book is a good excuse to build that muscle: start naive, measure everything, and optimize one change at a time.
 
 ## Features
 
