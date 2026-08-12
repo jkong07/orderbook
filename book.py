@@ -72,6 +72,59 @@ class OrderBook:
                 if not level:
                     del exec_dict[best_price]
 
+    def depth(self, n=None):
+        if n is not None and n < 0:
+            raise ValueError(f"n must be non-negative, got {n}")
+        bid_levels = []
+        ask_levels = []
+        if n is None:
+            for price in self.bids.islice(reverse=True):
+                count = 0
+                for o in self.bids[price]:
+                    count += o.qty
+                bid_levels.append((price, count))
+
+            for price in self.asks.islice():
+                count = 0
+                for o in self.asks[price]:
+                    count += o.qty
+                ask_levels.append((price, count))
+        else:
+            bid_depth = min(n, len(self.bids))
+            ask_depth = min(n, len(self.asks))
+
+            for price in self.bids.islice(start=len(self.bids) - bid_depth, reverse = True):
+                count = 0
+                for o in self.bids[price]:
+                    count += o.qty
+                bid_levels.append((price, count))
+            
+            for price in self.asks.islice(stop=ask_depth):
+                count = 0
+                for o in self.asks[price]:
+                    count += o.qty
+                ask_levels.append((price, count))
+
+        return bid_levels, ask_levels
+
+    def printer(self, bid_list: list[tuple[int, int]], ask_list: list[tuple[int, int]]):
+        print(f"{'PRICE':>8} {'QTY':>8}")
+        print("-" * 20)
+
+        if not bid_list and not ask_list:
+            print(f"{'(empty book)':^17}")
+            print("-" * 20)
+            return
+
+        for p in reversed(ask_list):
+            row = f"{p[0]/100:>8.2f} {p[1]:>8}"
+            print(row)
+
+        print("-" * 20)
+
+        for p in bid_list:
+            row = f"{p[0]/100:>8.2f} {p[1]:>8}"
+            print(row)
                 
 
 
