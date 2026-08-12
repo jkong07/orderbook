@@ -25,18 +25,13 @@ class OrderBook:
         self._next_seq += 1
         return i
 
-    def add(self, side: Side, price: int, qty: int) -> int:
+    def add(self, order : Order) -> int:
         order_id = self._next_id()
-        order = Order(order_id, side, price, qty)
 
-        if side == Side.BUY:
-            if price not in self.bids:
-                self.bids[price] = deque()
-            self.bids[price].append(order)
-        else:
-            if price not in self.asks:
-                self.asks[price] = deque()
-            self.asks[price].append(order)
+        order_dict = self.bids if order.side == Side.BUY else self.asks
+        if order.price not in order_dict:
+            order_dict[order.price] = deque()
+        order_dict[order.price].append(order)
 
         return order_id
 
@@ -51,7 +46,34 @@ class OrderBook:
                         return True
 
         return False
-        
+
+    def execute(self, order: Order) -> None:
+        exec_dict = self.asks if order.side == Side.BUY else self.bids
+        i = 0 if order.side == Side.BUY else -1
+
+        while order.qty > 0 and exec_dict:
+            best_price, level = exec_dict.peekitem(i)
+
+            if order.side == Side.BUY:
+                if best_price > order.price:
+                    break
+            else:
+                if best_price < order.price:
+                    break
+
+            resting = level[0]
+            trade_qty = min(order.qty, resting.qty)
+
+            order.qty -= trade_qty
+            resting.qty -= trade_qty
+
+            if resting.qty == 0:
+                level.popleft()
+                if not level:
+                    del exec_dict[best_price]
+
+                
+
 
 
 
