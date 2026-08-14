@@ -26,16 +26,14 @@ class OrderBook:
         return i
 
     def add(self, order : Order) -> int:
-        order_id = self._next_id()
-
         order_dict = self.bids if order.side == Side.BUY else self.asks
         if order.price not in order_dict:
             order_dict[order.price] = deque()
         order_dict[order.price].append(order)
 
-        return order_id
+        return order.order_id
 
-    def cancel(self, order_id: int) -> bool:
+    def cancel(self, order_id: int) -> Order | None:
         for book_side in (self.bids, self.asks):
             for price, price_deque in book_side.items():
                 for o in price_deque:
@@ -43,13 +41,15 @@ class OrderBook:
                         price_deque.remove(o)
                         if not price_deque:
                             del book_side[price]
-                        return True
+                        return o
 
-        return False
+        return None
 
-    def execute(self, order: Order) -> None:
+    def execute(self, order: Order) -> list[tuple[int, int, int]]:
         exec_dict = self.asks if order.side == Side.BUY else self.bids
         i = 0 if order.side == Side.BUY else -1
+
+        fills = []
 
         while order.qty > 0 and exec_dict:
             best_price, level = exec_dict.peekitem(i)
@@ -67,10 +67,14 @@ class OrderBook:
             order.qty -= trade_qty
             resting.qty -= trade_qty
 
+            fills.append((resting.order_id, best_price, trade_qty))
+
             if resting.qty == 0:
                 level.popleft()
                 if not level:
                     del exec_dict[best_price]
+
+        return fills
 
     def depth(self, n=None):
         if n is not None and n < 0:
