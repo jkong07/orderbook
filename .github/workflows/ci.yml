@@ -1,0 +1,40 @@
+name: CI
+
+# Runs on every push to main and on every pull request, so a bad commit
+# gets flagged whether it lands via direct push or a PR.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    strategy:
+      # fail-fast: false means if the Ubuntu job fails, the macOS job still
+      # runs to completion instead of being cancelled — useful here since
+      # the whole point of the matrix is to see both platforms' results,
+      # not just the first failure.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Both GitHub-hosted runner images ship a recent CMake and a C++20
+      # capable compiler out of the box (AppleClang on macos-latest,
+      # GCC on ubuntu-latest), so no separate toolchain-install step is
+      # needed. If you later need a specific compiler version pinned,
+      # that's the step you'd add here.
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      # --output-on-failure prints the failing test's stdout/stderr inline
+      # in the Actions log, instead of just "1 test failed" with no detail.
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

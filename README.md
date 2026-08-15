@@ -34,12 +34,13 @@ Everything else (C++ port, ITCH parsing, benchmarks) is not yet built — see St
 ## How to run it
 
 ```bash
+cd python
 python3 -m venv .venv
 source .venv/bin/activate
 pip install sortedcontainers
 ```
 
-Then, from a REPL:
+Then, from a REPL (run from the `python/` directory):
 
 ```python
 from book import Order, OrderBook, Side
@@ -65,7 +66,7 @@ book.printer(bids, asks)
 To fuzz the book against every invariant (seeded and reproducible):
 
 ```bash
-python3 driver.py          # random seed, printed to stdout
+python3 python/driver.py   # random seed, printed to stdout
 ```
 
 ```python
