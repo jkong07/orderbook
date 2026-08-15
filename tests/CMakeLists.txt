@@ -25,6 +25,7 @@ FetchContent_MakeAvailable(googletest)
 # The test binary. Add new test .cpp files to this list as you write them.
 add_executable(orderbook_tests
     trivial_test.cpp
+    order_book_test.cpp
 )
 
 target_link_libraries(orderbook_tests PRIVATE

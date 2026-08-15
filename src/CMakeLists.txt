@@ -3,7 +3,7 @@
 # compiled artifact (liborderbook.a) that consumers link against, instead of
 # just contributing include paths/flags.
 add_library(orderbook STATIC
-    orderbook.cpp
+    book.cpp
 )
 
 # PUBLIC (not INTERFACE) because this include path is needed both to compile

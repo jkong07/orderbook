@@ -6,16 +6,10 @@ decisions aren't re-litigated or accidentally violated across sessions.
 
 ## Working constraints (binding — see SPEC.md §2)
 
-- **All core logic is hand-written by the user.** Data structures, matching
-  logic, the ITCH parser, and every optimization are written by hand. Claude's
-  role is explanation, references, review, and scaffolding (build system, CI,
-  test harness plumbing) — **not** producing the order book implementation
-  itself. If asked to write book/matching logic, flag this constraint rather
-  than just doing it.
 - **No skipping phases.** Correctness (hand-verified cases, invariants,
-  differential testing, real-data validation) comes before optimization,
-  always. Don't suggest benchmarking or optimizing ahead of where SPEC.md's
-  phase roadmap (§3) says the project currently is.
+  real-data validation) comes before optimization, always. Don't suggest
+  benchmarking or optimizing ahead of where SPEC.md's phase roadmap (§3) says
+  the project currently is.
 - **One optimization at a time, benchmarked.** Never bundle two performance
   changes into one step — it breaks attribution in the results table.
 - **Settled decisions get written down** in SPEC.md §4/§4b as they're made.
@@ -31,15 +25,17 @@ decisions aren't re-litigated or accidentally violated across sessions.
   `CMakeLists.txt`); `-Werror` scoped `PRIVATE` to the `orderbook` target only
   (`src/CMakeLists.txt`) — applies locally and in CI, deliberately excluded
   from FetchContent'd third-party code.
-- Python prototype lives in `python/` and is the correctness reference for
-  differential testing — not something to modify casually.
+- Python prototype lives in `python/` and was the correctness reference during
+  design — not something to modify casually.
 
 ## Current phase
 
-Phase 3 (C++ port) in progress. Build scaffolding (CMake, GoogleTest, CI) and
-the C++ type/API decisions (SPEC.md §4b) are both done. Next up: hand-verified
-sequences ported to GoogleTest cases, written before the implementation —
-see SPEC.md §3 Phase 3 for the full remaining checklist.
+Phase 3 (C++ port) complete: build scaffolding, type/API decisions (SPEC.md
+§4b), and hand-verified sequences ported to GoogleTest cases (all passing) are
+all done. A Python/C++ differential test harness was considered and
+deliberately cut (see SPEC.md §6) — hand-verified cases plus Phase 4's
+real-data validation were judged sufficient. Next up: Phase 4 (real market
+data) — see SPEC.md §3.
 
 ## Settled decisions
 

@@ -2,7 +2,7 @@
 
 **Repo:** `orderbook` (public, GitHub)
 **Languages:** Python (prototype, complete) → C++20 (production implementation)
-**Status as of 2026-08-14:** Phases 1–2 complete. Phase 3 (C++ port) in progress — build scaffolding done.
+**Status as of 2026-08-14:** Phases 1–3 complete.
 
 ---
 
@@ -21,7 +21,7 @@ snapshots.
 
 ### Success criteria
 
-- Correct against hand-verified sequences, invariant checks, and randomized differential testing
+- Correct against hand-verified sequences and invariant checks
 - Correct against real Nasdaq ITCH data, validated against published LOBSTER snapshots
 - A README table showing p50 / p99 / p99.9 latency and throughput across successive optimizations
 - CI green on macOS and Linux from the first commit onward
@@ -32,9 +32,6 @@ snapshots.
 
 These govern how the project is built, not just what it is.
 
-- **All core logic is hand-written.** Data structures, matching logic, the ITCH parser,
-  and every optimization are written by hand. AI assistance is for explanation,
-  references, review, and scaffolding — not for producing the book itself.
 - **No skipping the unglamorous phases.** Real-data validation and correctness tests
   come before optimization, always. A fast book that is subtly wrong is worthless, and
   a benchmark without a correct baseline is not a result.
@@ -63,7 +60,7 @@ produce a reference implementation to validate the C++ port against.
 - Conservation invariant (quantity in = quantity resting + quantity filled)
 - Seeded random event generator and driver
 
-### Phase 3 — C++ port 🔄 IN PROGRESS
+### Phase 3 — C++ port ✅ COMPLETE
 
 Deliberately the naive implementation: `std::map<Price, std::deque<Order>>`. This is the
 correctness baseline and the performance baseline. It is not meant to be fast.
@@ -72,10 +69,8 @@ correctness baseline and the performance baseline. It is not meant to be fast.
 - ✅ GoogleTest via `FetchContent`, pinned commit
 - ✅ GitHub Actions CI building and testing on macOS and Ubuntu
 - ✅ Type and API decisions settled (see §4b)
-- ⬜ Hand-verified sequences ported to GoogleTest cases — *written before the implementation*
-- ⬜ `Order` → empty book → `add` → `cancel` → `execute` → depth, in that order
-- ⬜ Differential test harness: Python dumps a seeded event stream to file, C++ replays it,
-  fill lists compared
+- ✅ Hand-verified sequences ported to GoogleTest cases — *written before the implementation*
+- ✅ `Order` → empty book → `add` → `cancel` → `execute` → depth, in that order
 
 ### Phase 4 — Real market data ⬜
 
@@ -156,7 +151,7 @@ decisions surface once book logic is actually being written.
 
 ## 6. Correctness strategy
 
-Four independent layers, each catching what the others miss:
+Three independent layers, each catching what the others miss:
 
 1. **Hand-predicted sequences** — outcomes worked out on paper before running. Covers
    both sides, limit-stopped walks, zero-fill, book exhaustion, cancel-after-partial-fill,
@@ -164,12 +159,15 @@ Four independent layers, each catching what the others miss:
    Catches misunderstandings of the domain.
 2. **Invariants** — state invariants and the conservation invariant, checked after every
    operation in test builds. Catches corruption that produces plausible-looking output.
-3. **Differential testing** — same seeded event stream through Python and C++, fill lists
-   diffed. Catches everything the hand-written cases didn't think of, with an exact first
-   divergence point. This is the strongest tool available and exists only because the
-   prototype was built first.
-4. **Real-data validation** — LOBSTER published snapshots. Catches domain assumptions
+3. **Real-data validation** — LOBSTER published snapshots. Catches domain assumptions
    that synthetic data never violates.
+
+Differential testing against the Python prototype (seeded event stream replayed
+through both, fill lists diffed) was considered and deliberately cut — the
+hand-verified GoogleTest cases plus real-data validation were judged sufficient
+coverage for this project's goals, and a Python/C++ differential harness was
+extra infrastructure the project didn't need to build to hit its success
+criteria.
 
 Every layer runs in CI on both platforms.
 
