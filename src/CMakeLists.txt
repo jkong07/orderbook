@@ -4,6 +4,9 @@
 # just contributing include paths/flags.
 add_library(orderbook STATIC
     book.cpp
+    invariants.cpp
+    lobster.cpp
+    lobster_validate.cpp
 )
 
 # PUBLIC (not INTERFACE) because this include path is needed both to compile

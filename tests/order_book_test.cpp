@@ -151,6 +151,82 @@ TEST(OrderBookTest, CancelUnknownIdReturnsNulloptAndLeavesBookUnchanged) {
     EXPECT_EQ(bids[0].second, 100);
 }
 
+// --- reduce() --------------------------------------------------------------
+
+TEST(OrderBookTest, ReducePartiallyShrinksOrderInPlace) {
+    OrderBook book;
+
+    OrderId id = book.next_id();
+    book.add(Order{id, Side::Buy, 10050, 100});
+
+    std::optional<Order> result = book.reduce(id, 40);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->order_id, id);
+    EXPECT_EQ(result->qty, 60);
+
+    auto [bids, asks] = book.depth();
+    ASSERT_EQ(bids.size(), 1u);
+    EXPECT_EQ(bids[0].second, 60);
+}
+
+TEST(OrderBookTest, ReduceToZeroRemovesOrderAndPrunesEmptiedLevel) {
+    OrderBook book;
+
+    OrderId id = book.next_id();
+    book.add(Order{id, Side::Sell, 10050, 100});
+
+    std::optional<Order> result = book.reduce(id, 100);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->qty, 0);
+
+    auto [bids, asks] = book.depth();
+    EXPECT_TRUE(asks.empty());
+}
+
+TEST(OrderBookTest, ReduceByMoreThanRemainingQtyRemovesOrder) {
+    OrderBook book;
+
+    OrderId id = book.next_id();
+    book.add(Order{id, Side::Buy, 10050, 30});
+
+    std::optional<Order> result = book.reduce(id, 100);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->qty, 0);
+
+    auto [bids, asks] = book.depth();
+    EXPECT_TRUE(bids.empty());
+}
+
+TEST(OrderBookTest, ReduceUnknownIdReturnsNulloptAndLeavesBookUnchanged) {
+    OrderBook book;
+
+    book.add(Order{book.next_id(), Side::Buy, 10050, 100});
+
+    EXPECT_EQ(book.reduce(999, 10), std::nullopt);
+
+    auto [bids, asks] = book.depth();
+    ASSERT_EQ(bids.size(), 1u);
+    EXPECT_EQ(bids[0].second, 100);
+}
+
+TEST(OrderBookTest, ReduceOneOfTwoOrdersAtSameLevelLeavesTotalCorrect) {
+    OrderBook book;
+
+    OrderId first = book.next_id();
+    book.add(Order{first, Side::Sell, 10050, 40});
+    OrderId second = book.next_id();
+    book.add(Order{second, Side::Sell, 10050, 60});
+
+    book.reduce(first, 10);
+
+    auto [bids, asks] = book.depth();
+    ASSERT_EQ(asks.size(), 1u);
+    EXPECT_EQ(asks[0].second, 90);
+}
+
 // --- execute() -----------------------------------------------------------
 
 TEST(OrderBookTest, ExecuteFullyFillsAgainstRestingOrder) {

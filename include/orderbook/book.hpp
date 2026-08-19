@@ -33,6 +33,16 @@ public:
     // found. Prunes the price level if it empties out.
     std::optional<Order> cancel(OrderId order_id);
 
+    // Shrinks the resting order with the given ID by `qty` in place
+    // (preserves its time priority — unlike cancel+re-add). If the
+    // reduction consumes the order entirely (qty >= order's remaining
+    // qty), the order is removed, same as cancel(). Returns the order as
+    // it exists after the reduction (qty already updated), or nullopt if
+    // not found. Prunes the price level if it empties out. See SPEC.md
+    // §4b — added for LOBSTER partial-cancel/execution replay, where a
+    // resting order shrinks without changing its queue position.
+    std::optional<Order> reduce(OrderId order_id, Qty qty);
+
     // Matches `order` against the opposite side (price-time priority).
     // Does not mutate the caller's order — see ExecuteResult in fill.hpp.
     ExecuteResult execute(Order order);
@@ -44,6 +54,12 @@ public:
 
     void printer(const std::vector<std::pair<Price, Qty>>& bid_list,
                  const std::vector<std::pair<Price, Qty>>& ask_list) const;
+
+    // Read-only views of resting orders, best-first on both sides — for
+    // invariant checks (see invariants.hpp) that need per-order data depth()
+    // doesn't expose (individual order_id/qty, not aggregated by level).
+    const BidLevels& bids() const { return bids_; }
+    const AskLevels& asks() const { return asks_; }
 
 private:
     BidLevels bids_;

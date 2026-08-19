@@ -41,3 +41,4 @@ enable_testing()
 # than growing target-specific logic here.
 add_subdirectory(src)
 add_subdirectory(tests)
+add_subdirectory(tools)

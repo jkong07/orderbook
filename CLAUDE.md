@@ -30,12 +30,16 @@ decisions aren't re-litigated or accidentally violated across sessions.
 
 ## Current phase
 
-Phase 3 (C++ port) complete: build scaffolding, type/API decisions (SPEC.md
-§4b), and hand-verified sequences ported to GoogleTest cases (all passing) are
-all done. A Python/C++ differential test harness was considered and
-deliberately cut (see SPEC.md §6) — hand-verified cases plus Phase 4's
-real-data validation were judged sufficient. Next up: Phase 4 (real market
-data) — see SPEC.md §3.
+Phase 4 (real market data) complete — see SPEC.md §3/§4b/§4c. LOBSTER
+message parsing, event-type dispatch, and invariant checks (ported from
+`python/invariants.py`) are done; full AAPL 2012-06-21 trading day replays
+with 0 invariant violations. Along the way, discovered and documented (§4c)
+that free LOBSTER samples can't support exact full-day snapshot
+reconstruction (a data-source limitation, not an `OrderBook` bug) — exact
+snapshot-match validation is scoped to a short real window instead. Sample
+data lives in `data/lobster/` (gitignored, not committed — download via the
+Hugging Face mirror `totalorganfailure/lobster-data`, see §4c). Next up:
+Phase 5 (benchmark baseline) — see SPEC.md §3.
 
 ## Settled decisions
 

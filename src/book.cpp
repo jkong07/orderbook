@@ -44,6 +44,36 @@ std::optional<Order> OrderBook::cancel(OrderId order_id) {
     return search_side(asks_);
 }
 
+std::optional<Order> OrderBook::reduce(OrderId order_id, Qty qty) {
+    auto search_side = [&order_id, &qty](auto& levels) -> std::optional<Order> {
+        for (auto level_it = levels.begin(); level_it != levels.end(); ++level_it) {
+            auto& [price, level] = *level_it;
+            for (auto order_it = level.begin(); order_it != level.end(); ++order_it) {
+                if (order_it->order_id != order_id) {
+                    continue;
+                }
+                order_it->qty -= qty;
+                if (order_it->qty <= 0) {
+                    Order found = std::move(*order_it);
+                    found.qty = 0;
+                    level.erase(order_it);
+                    if (level.empty()) {
+                        levels.erase(level_it);
+                    }
+                    return found;
+                }
+                return *order_it;
+            }
+        }
+        return std::nullopt;
+    };
+
+    if (auto found = search_side(bids_)) {
+        return found;
+    }
+    return search_side(asks_);
+}
+
 ExecuteResult OrderBook::execute(Order order) {
     ExecuteResult result;
     Qty remaining = order.qty;

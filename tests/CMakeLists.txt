@@ -26,6 +26,8 @@ FetchContent_MakeAvailable(googletest)
 add_executable(orderbook_tests
     trivial_test.cpp
     order_book_test.cpp
+    invariants_test.cpp
+    lobster_replay_test.cpp
 )
 
 target_link_libraries(orderbook_tests PRIVATE
@@ -41,4 +43,9 @@ target_link_libraries(orderbook_tests PRIVATE
 # binary as a single CTest test, which is simpler but gives coarser
 # pass/fail reporting.
 include(GoogleTest)
-gtest_discover_tests(orderbook_tests)
+# WORKING_DIRECTORY set to the source dir (not the default build-dir
+# location) so lobster_replay_test.cpp's relative "fixtures/..." paths
+# resolve regardless of build directory.
+gtest_discover_tests(orderbook_tests
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
