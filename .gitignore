@@ -6,5 +6,6 @@ venv/
 .idea/
 .vscode/
 build/
+build-release/
 data/
 .cache/

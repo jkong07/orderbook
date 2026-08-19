@@ -90,11 +90,17 @@ manually — see §4b for why it isn't in `ctest`).
 This phase is where most naive implementations break. Real feeds contain message
 sequences that synthetic tests never generate.
 
-### Phase 5 — Benchmark baseline ⬜ *(resume-ready checkpoint)*
+### Phase 5 — Benchmark baseline ✅ *(resume-ready checkpoint)*
 
 - Measure p50 / p99 / p99.9 per-message latency and overall throughput
 - Establish measurement methodology before optimizing (see §7)
 - README table with the baseline row filled in
+
+Done — see §7 for the full methodology and results. Baseline:
+~660–710k msg/s, 125ns overall p50. `add()` runs ~50-60x faster than
+`cancel()`/`reduce()` at p50 (42ns vs. ~2.3-3.1µs) because cancel/reduce do
+a linear order-ID scan with no index — the clear, expected target for
+Phase 6 step 3 (O(1) cancel via hash map).
 
 At this point the project is presentable even if nothing further is done.
 
@@ -251,6 +257,34 @@ Decide before Phase 5 and hold it constant, or the table means nothing.
 - Report the machine, compiler, and flags alongside the numbers
 - Same build configuration for every row of the table
 - Re-run the full correctness suite at each optimization step — behavior must be identical
+
+**Fixed for every row below:**
+
+| | |
+|---|---|
+| Input | `data/lobster/AAPL_10/message.csv` (LOBSTER AAPL 2012-06-21, full trading day, 400,391 messages — same file Phase 4 validated against) |
+| Warm-up | First 10,000 messages applied untimed, discarded from all statistics |
+| Machine | MacBook, macOS 15.7.7, Apple Silicon (arm64) |
+| Compiler | Apple Clang 17.0.0 (clang-1700.0.13.5) |
+| Build | `cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release` (a separate build dir from the default debug `build/`, so day-to-day `ctest` runs never accidentally pick up Release flags or vice versa) |
+| Harness | `tools/benchmark.cpp` — pre-parses the whole file into memory first (isolates timed loop from file I/O/CSV parsing), times each `lobster::apply()` call individually with `std::chrono::steady_clock`, reports overall latency plus a breakdown by LOBSTER event type |
+
+**Results:**
+
+| Step | Change | Throughput | Overall p50 | Overall p99 | Overall p99.9 |
+|---|---|---|---|---|---|
+| 0 (baseline) | Naive `std::map<Price, std::deque<Order>>`, linear order-ID scan for cancel/reduce | ~660–710k msg/s | 125 ns | 7.5–9.9 µs | 14–32 µs |
+
+Per-event-type breakdown at baseline (this is what motivates Phase 6's optimization order):
+
+| Event type | p50 | p99 | p99.9 |
+|---|---|---|---|
+| New (`add`) | 42 ns | ~210–250 ns | 1.4–2.9 µs |
+| PartialCancel (`reduce`) | ~2.5 µs | ~8–14 µs | ~17–45 µs |
+| Delete (`cancel`) | ~2.3 µs | ~9–13 µs | ~16–42 µs |
+| ExecuteVisible (`reduce`) | ~3.1 µs | ~12–15 µs | ~28–48 µs |
+
+`add()` is ~50-60x faster than `cancel()`/`reduce()` at p50: `add()` only pays for a `map` insert at a price that's usually already near the top of book, while `cancel()`/`reduce()` do a linear scan across every price level and every order within it to find an order by ID — there's no order-ID index yet. This is exactly the gap Phase 6 step 3 ("O(1) cancel — hash map from order ID directly to the order's node") targets, and this baseline is the number that optimization needs to beat.
 
 ---
 

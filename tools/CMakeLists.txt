@@ -7,3 +7,13 @@ add_executable(lobster_replay
 target_link_libraries(lobster_replay PRIVATE
     orderbook
 )
+
+# See benchmark.cpp for why this also isn't part of ctest — timing numbers
+# from a shared CI runner would be noise, not signal.
+add_executable(benchmark
+    benchmark.cpp
+)
+
+target_link_libraries(benchmark PRIVATE
+    orderbook
+)

@@ -28,15 +28,24 @@ What's implemented in the C++ port (phase 3 done — naive baseline, not yet opt
 - GoogleTest suite (`tests/order_book_test.cpp`) — hand-verified sequences covering `Order` construction, empty-book behavior, `add`/`cancel`/`execute`/`depth`, same-price aggregation, multi-level walks, limit-price stops, and that `execute()` doesn't mutate the caller's order
 - A differential test harness against the Python prototype was considered and deliberately cut — see `SPEC.md` §6 for why
 
-Everything else (ITCH parsing, benchmarks) is not yet built — see Status below.
+What's implemented for real-data validation and benchmarking (phases 4-5 done):
+
+- `orderbook::OrderBook::reduce()` (`book.hpp`/`book.cpp`) — shrinks a resting order in place by a given qty, preserving its queue position (unlike cancel-and-re-add); removes it entirely if the reduction consumes it
+- `orderbook::lobster` (`include/orderbook/lobster.hpp`, `src/lobster.cpp`) — parses LOBSTER message-file rows and `apply()`s them to an `OrderBook` (New→`add()`, PartialCancel/ExecuteVisible→`reduce()`, Delete→`cancel()`, ExecuteHidden/Cross/Halt→no-op)
+- `orderbook::lobster` validation helpers (`lobster_validate.hpp`/`.cpp`) — parses LOBSTER orderbook-snapshot rows and diffs them against `OrderBook::depth()`
+- `orderbook::invariants` (`invariants.hpp`/`.cpp`) — ported from `python/invariants.py`: not-crossed, positive-qty, unique-IDs, and per-side conservation checks
+- `tools/lobster_replay` — CLI that replays a full LOBSTER day against `OrderBook`, checking invariants after every message and diffing against published snapshots (run manually against the downloaded sample; see `SPEC.md` §4c for why exact snapshot matching isn't achievable for a full day with free LOBSTER samples — invariants are the full-day correctness bar instead)
+- `tools/benchmark` — CLI that replays a LOBSTER day and reports per-message-type p50/p99/p99.9 latency and overall throughput; see `SPEC.md` §7 for methodology and results
+- `tests/lobster_replay_test.cpp` + `tests/fixtures/` — a short real-data slice (12 messages) run in CI with exact snapshot matching, proving the parser/dispatch logic against genuine exchange data
+- `tests/invariants_test.cpp` — unit coverage for each invariant check
 
 ## Status
 
 - [x] **Phase 1** — Python prototype: add/cancel/execute logic, terminal depth-view renderer — `add()`, `cancel()`, `execute()`, `depth()`, `printer()`
 - [x] **Phase 2** — Invariant checks (`invariants.py`: crossed book, non-positive qty, empty levels, price/side consistency, FIFO ordering, unique IDs, per-side conservation) + seeded randomized event fuzzing (`driver.py`), checked after every event
 - [x] **Phase 3** — Port to C++: CMake, GoogleTest, GitHub Actions CI (macOS + Ubuntu), naive baseline with `std::map<Price, std::deque<Order>>`, hand-verified sequences ported to GoogleTest cases
-- [ ] **Phase 4** — Parse real Nasdaq ITCH 5.0 data via LOBSTER samples, replay it, validate against published snapshots
-- [ ] **Phase 5** — Benchmark p50/p99/p99.9 latency and throughput
+- [x] **Phase 4** — Parse real Nasdaq ITCH 5.0 data via LOBSTER samples, replay it, validate against published snapshots. Free LOBSTER samples turned out to not support exact full-day reconstruction (windowed to trading hours, so pre-existing resting orders are invisible — see `SPEC.md` §4c); validation was scoped to invariants holding over the full real day (0 violations across 400,391 messages) plus exact snapshot matching over a short real window
+- [x] **Phase 5** — Benchmark p50/p99/p99.9 latency and throughput — see results below and `SPEC.md` §7
 - [ ] **Phase 6** — Optimize incrementally (array-indexed price levels → intrusive linked lists → O(1) cancel via hash map → memory pool → cache alignment), benchmarking after each change and recording results in a table
 
 ## How to run it
@@ -90,6 +99,38 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-## Roadmap
+To replay a full LOBSTER trading day (download a sample first, e.g. from the
+`totalorganfailure/lobster-data` Hugging Face mirror, into `data/lobster/`;
+these files aren't checked in — see `SPEC.md` §4c):
 
-See the phase checklist under [Status](#status) above.
+```bash
+./build/tools/lobster_replay data/lobster/AAPL_10/message.csv data/lobster/AAPL_10/orderbook.csv
+```
+
+To benchmark (a separate Release build — the default `build/` above is a
+debug build, unsuitable for timing):
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release -j
+./build-release/tools/benchmark data/lobster/AAPL_10/message.csv
+```
+
+## Benchmark results
+
+Phase 5 baseline (naive `std::map<Price, std::deque<Order>>`, no order-ID
+index). See `SPEC.md` §7 for full methodology (machine, compiler, warm-up).
+
+| | Throughput | p50 | p99 | p99.9 |
+|---|---|---|---|---|
+| Overall | ~660-710k msg/s | 125 ns | 7.5-9.9 µs | 14-32 µs |
+| New (`add`) | | 42 ns | ~210-250 ns | 1.4-2.9 µs |
+| Delete (`cancel`) | | ~2.3 µs | ~9-13 µs | ~16-42 µs |
+| PartialCancel (`reduce`) | | ~2.5 µs | ~8-14 µs | ~17-45 µs |
+| ExecuteVisible (`reduce`) | | ~3.1 µs | ~12-15 µs | ~28-48 µs |
+
+`add()` is ~50-60x faster than `cancel()`/`reduce()` at p50 — those do a
+linear scan across every price level and order to find an order by ID, with
+no index yet. That gap is exactly what Phase 6 step 3 (O(1) cancel via a
+hash map from order ID to node) targets.
+
