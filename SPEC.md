@@ -136,7 +136,7 @@ alignment) — benchmarking after each and adding a row to the table:
    (no false sharing to reduce without threads; the 33% larger footprint costs
    more than the occasional-straddle savings here). Reported as-is, not reverted.
 
-### Phase 7 — Write-up ⬜
+### Phase 7 — Write-up ✅
 
 README covering architecture, correctness strategy, benchmark methodology, results
 table, and an honest limitations section.

@@ -55,7 +55,12 @@ reported honestly rather than reverted, since this is a single-threaded
 workload where "reduce false sharing" has no target. Every step verified
 against the full test suite (38/38) including a `-fsanitize=address,undefined`
 debug build, plus the full-day LOBSTER invariant replay (0 violations
-throughout). Next up: Phase 7 (write-up) — see SPEC.md §3.
+throughout).
+
+Phase 7 (write-up) is complete — README.md now covers architecture,
+benchmark results/methodology, and an honest limitations section (step 3
+regression, step 5 flat result, LOBSTER windowed-sample gap, single-threaded
+scope). All roadmap phases (1-7) are done — see SPEC.md §3.
 
 ## Settled decisions
 
