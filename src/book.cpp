@@ -12,66 +12,84 @@ OrderId OrderBook::next_id() {
 
 OrderId OrderBook::add(Order order) {
     const OrderId id = order.order_id;
-    if (order.side == Side::Buy) {
-        bids_[order.price].push_back(std::move(order));
+    const Side side = order.side;
+    const Price price = order.price;
+
+    // Pool-allocated so the node has a stable address for Order::prev/next
+    // to point at (see SPEC.md §4b Phase 6 step 2), without a malloc/free
+    // per order (step 4 — see order_pool.hpp).
+    Order* node = pool_.acquire(std::move(order));
+
+    if (side == Side::Buy) {
+        bids_[price].push_back(node);
     } else {
-        asks_[order.price].push_back(std::move(order));
+        asks_[price].push_back(node);
     }
+    index_[id] = IndexEntry{side, price, OrderList::iterator{node}};
     return id;
 }
 
 std::optional<Order> OrderBook::cancel(OrderId order_id) {
-    auto search_side = [&order_id](auto& levels) -> std::optional<Order> {
-        for (auto level_it = levels.begin(); level_it != levels.end(); ++level_it) {
-            auto& [price, level] = *level_it;
-            for (auto order_it = level.begin(); order_it != level.end(); ++order_it) {
-                if (order_it->order_id == order_id) {
-                    Order found = std::move(*order_it);
-                    level.erase(order_it);
-                    if (level.empty()) {
-                        levels.erase(level_it);
-                    }
-                    return found;
-                }
-            }
-        }
+    auto index_it = index_.find(order_id);
+    if (index_it == index_.end()) {
         return std::nullopt;
+    }
+    const auto [side, price, order_it] = index_it->second;
+    Order* node = &(*order_it);
+
+    auto erase_from = [&](auto& levels) -> Order {
+        auto level_it = levels.find(price);
+        OrderList& level = level_it->second;
+        Order found = std::move(*node);
+        found.prev = nullptr;
+        found.next = nullptr;
+        level.erase(order_it);
+        pool_.release(node);
+        if (level.empty()) {
+            levels.erase(level_it);
+        }
+        return found;
     };
 
-    if (auto found = search_side(bids_)) {
-        return found;
-    }
-    return search_side(asks_);
+    Order found = (side == Side::Buy) ? erase_from(bids_) : erase_from(asks_);
+    index_.erase(index_it);
+    return found;
 }
 
 std::optional<Order> OrderBook::reduce(OrderId order_id, Qty qty) {
-    auto search_side = [&order_id, &qty](auto& levels) -> std::optional<Order> {
-        for (auto level_it = levels.begin(); level_it != levels.end(); ++level_it) {
-            auto& [price, level] = *level_it;
-            for (auto order_it = level.begin(); order_it != level.end(); ++order_it) {
-                if (order_it->order_id != order_id) {
-                    continue;
-                }
-                order_it->qty -= qty;
-                if (order_it->qty <= 0) {
-                    Order found = std::move(*order_it);
-                    found.qty = 0;
-                    level.erase(order_it);
-                    if (level.empty()) {
-                        levels.erase(level_it);
-                    }
-                    return found;
-                }
-                return *order_it;
-            }
-        }
+    auto index_it = index_.find(order_id);
+    if (index_it == index_.end()) {
         return std::nullopt;
+    }
+    const auto [side, price, order_it] = index_it->second;
+    Order* node = &(*order_it);
+
+    node->qty -= qty;
+    if (node->qty > 0) {
+        Order snapshot = *node;
+        snapshot.prev = nullptr;
+        snapshot.next = nullptr;
+        return snapshot;
+    }
+
+    auto erase_from = [&](auto& levels) -> Order {
+        auto level_it = levels.find(price);
+        OrderList& level = level_it->second;
+        Order found = std::move(*node);
+        found.qty = 0;
+        found.prev = nullptr;
+        found.next = nullptr;
+        level.erase(order_it);
+        pool_.release(node);
+        if (level.empty()) {
+            levels.erase(level_it);
+        }
+        return found;
     };
 
-    if (auto found = search_side(bids_)) {
-        return found;
-    }
-    return search_side(asks_);
+    Order found = (side == Side::Buy) ? erase_from(bids_) : erase_from(asks_);
+    index_.erase(index_it);
+    return found;
 }
 
 ExecuteResult OrderBook::execute(Order order) {
@@ -103,7 +121,9 @@ ExecuteResult OrderBook::execute(Order order) {
             result.fills.push_back(Fill{resting.order_id, best_price, trade_qty});
 
             if (resting.qty == 0) {
-                level.pop_front();
+                index_.erase(resting.order_id);
+                Order* node = level.pop_front();
+                pool_.release(node);
                 if (level.empty()) {
                     levels.erase(level_it);
                 }

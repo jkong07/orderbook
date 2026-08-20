@@ -34,15 +34,28 @@ Phase 5 (benchmark baseline) complete — see SPEC.md §3/§7. Baseline:
 ~660-710k msg/s, 125ns overall p50, measured via `tools/benchmark` against
 the full real AAPL 2012-06-21 LOBSTER day in a separate Release build
 (`build-release/`, gitignored — `cmake -S . -B build-release
--DCMAKE_BUILD_TYPE=Release`). `add()` is ~50-60x faster than
-`cancel()`/`reduce()` at p50 because the latter do a linear order-ID scan
-with no index — sets up Phase 6 step 3 (O(1) cancel) as the clear first
-optimization target. Phase 4 (real market data) is also complete — see §4c
-for the LOBSTER windowed-sample finding. Sample data lives in
+-DCMAKE_BUILD_TYPE=Release`). Phase 4 (real market data) is also complete —
+see §4c for the LOBSTER windowed-sample finding. Sample data lives in
 `data/lobster/` (gitignored — download via the Hugging Face mirror
-`totalorganfailure/lobster-data`). Next up: Phase 6 (optimization) — see
-SPEC.md §3, and CLAUDE.md's binding constraint above: one optimization at a
-time, benchmarked against this baseline, before moving to the next.
+`totalorganfailure/lobster-data`).
+
+Phase 6 (optimization) is complete — all 5 steps done, run out of original
+order (see SPEC.md §3/§7 for the full results table and reasoning behind
+each). Baseline → final: ~660-710k → ~21.4-22.0M msg/s throughput, 125ns →
+41ns overall p50. Order run: step 3 (O(1) cancel, `unordered_map<OrderId,
+{side, price, iterator}> index_` into per-level lists) first, since the
+Phase 5 breakdown showed `cancel()`/`reduce()` as the dominant bottleneck;
+then step 1 (array-indexed price levels, `PriceLevelArray` replacing
+`std::map`); then step 2 (intrusive linked lists, `IntrusiveOrderList` +
+`Order::prev`/`next`) — a measured *regression* from raw per-order
+`new`/`delete`; then step 4 (memory pool, `OrderPool`) — recovered that
+regression and then some, the best and most stable result in the table;
+then step 5 (cache alignment, `alignas(64) Order`) — flat-to-slightly-worse,
+reported honestly rather than reverted, since this is a single-threaded
+workload where "reduce false sharing" has no target. Every step verified
+against the full test suite (38/38) including a `-fsanitize=address,undefined`
+debug build, plus the full-day LOBSTER invariant replay (0 violations
+throughout). Next up: Phase 7 (write-up) — see SPEC.md §3.
 
 ## Settled decisions
 

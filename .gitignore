@@ -7,5 +7,6 @@ venv/
 .vscode/
 build/
 build-release/
+build-asan/
 data/
 .cache/

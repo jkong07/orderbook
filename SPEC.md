@@ -104,19 +104,37 @@ Phase 6 step 3 (O(1) cancel via hash map).
 
 At this point the project is presentable even if nothing further is done.
 
-### Phase 6 — Optimization ⬜
+### Phase 6 — Optimization ✅ *(all 5 steps done, run out of original order)*
 
-In order, benchmarking after each and adding a row to the table:
+Originally listed in the order below; step 3 (O(1) cancel) was promoted to
+run first because the Phase 5 baseline breakdown (§7) showed it was the
+dominant bottleneck by a wide margin (`cancel()`/`reduce()` 50-60x slower
+than `add()` at p50), then step 1 (array-indexed price levels), then step 2
+(intrusive linked lists), then step 4 (memory pool), then step 5 (cache
+alignment) — benchmarking after each and adding a row to the table:
 
-1. **Array-indexed price levels** — replace `std::map` with a flat array indexed by
-   price offset. Removes tree traversal and pointer chasing from the hot path.
-2. **Intrusive linked lists** — orders carry their own list pointers rather than living
-   in a `deque`. Removes a layer of indirection and allocation.
-3. **O(1) cancel** — hash map from order ID directly to the order's node, so cancel
-   stops being a scan.
-4. **Memory pool** — pre-allocate order nodes; eliminate per-order allocation from the
-   hot path.
-5. **Cache alignment** — pack hot fields, align to cache lines, reduce false sharing.
+1. ✅ **Array-indexed price levels** — `PriceLevelArray<Descending>` (flat
+   `std::vector<OrderList>` indexed by price offset, tracked best cursor)
+   replaces `std::map`. Removes tree traversal and pointer chasing from level
+   lookup. See §7 (~15.5–16.1M → ~21.3–22.1M msg/s, overall p99 125ns → 84ns).
+2. ✅ **Intrusive linked lists** — `IntrusiveOrderList`; orders carry their own
+   `prev`/`next` pointers rather than living inside a `std::list`-owned node,
+   each resting order individually heap-allocated. A small, honest *regression*
+   (~21.3–22.1M → ~19.5–20.7M msg/s) — see §7 for why (raw `new`/`delete` per
+   order, no pooling yet) and how step 4 recovered it.
+3. ✅ **O(1) cancel** — `unordered_map<OrderId, {side, price, iterator}>` index into
+   per-level `std::list<Order>` (swapped from `std::deque` for iterator stability), so
+   `cancel()`/`reduce()`/`execute()`'s resting-order removal are no longer a scan. See §7
+   for results (~660–710k → ~15.5–16.1M msg/s, 125ns → 42ns overall p50).
+4. ✅ **Memory pool** — `OrderPool`; 4096-node chunks with an intrusive free list
+   (reusing `Order::next`), replacing step 2/3's per-order `new`/`delete`. Recovered
+   step 3's regression and then some (~19.5–20.7M → ~22.1–22.8M msg/s — best throughput
+   *and* tightest tail-latency variance of any step yet). See §7.
+5. ✅ **Cache alignment** — `alignas(64) Order`, so no order straddles two cache
+   lines in `OrderPool`'s contiguous chunks. Flat-to-slightly-worse in this
+   single-threaded workload (~22.1–22.8M → ~21.4–22.0M msg/s) — see §7 for why
+   (no false sharing to reduce without threads; the 33% larger footprint costs
+   more than the occasional-straddle savings here). Reported as-is, not reverted.
 
 ### Phase 7 — Write-up ⬜
 
@@ -158,6 +176,10 @@ table, and an honest limitations section.
 | `include/orderbook/lobster_validate.hpp` + `lobster_validate.cpp`: `parse_orderbook_line()`, `compare_to_snapshot()`, `seed_from_snapshot()`, `snapshot_before()` | Split from `lobster.hpp` because it's validation/diagnostic machinery, not book-driving logic — a consumer that only wants to replay a message stream (e.g. a future benchmark harness) shouldn't need to link snapshot-parsing code. `seed_from_snapshot()`/`snapshot_before()` exist specifically to work around the windowed-sample limitation in §4c. |
 | `include/orderbook/invariants.hpp` + `invariants.cpp`, ported from `python/invariants.py` | Only `check_not_crossed`, `check_positive_qty`, `check_unique_ids`, `check_conservation` were ported — `check_no_empty_levels`, `check_price_side_consistency`, `check_fifo_order` are structurally guaranteed by `OrderBook`'s own implementation (map key always equals resting price, levels are pruned on empty, orders are never reordered within a `deque`) and can't be violated from outside the class, so porting them would test the language's memory model, not this project's logic. `OrderBook::bids()`/`asks()` were added as const accessors so invariants.cpp (and other external code) can walk resting orders — `depth()` only exposes aggregated per-level data, not individual orders. |
 | `check_not_crossed` excluded from LOBSTER-replay's invariant set (still used as-is for synthetic/`execute()`-driven tests) | LOBSTER logs an "Add" and its matching "Execute" message(s) as *separate* rows (§4c) — a marketable order legitimately locks or crosses the book for exactly one message before the next row's Execute consumes it. That's expected behavior at LOBSTER's message granularity, not a bug; asserting "never crossed" after every single LOBSTER message would fail on correct replay. |
+| `Order` gained public `prev`/`next` (`Order*`, default `nullptr`) — Phase 6 step 2 (intrusive linked lists) | Needed so `Order` nodes can link into `IntrusiveOrderList` without a separate container-owned wrapper node (`include/orderbook/intrusive_order_list.hpp`). Deliberately on the public struct rather than a private book-internal wrapper type, since keeping one `Order` type (not `Order` + `OrderNode : Order`) avoids upcast/downcast noise at every call site that already passes `Order` around (`add()`, fills, invariants, LOBSTER replay). The tradeoff: these fields are meaningless outside `OrderBook`, so every `Order` handed back to a caller (`cancel()`/`reduce()`'s returned `Order`) has them explicitly zeroed before return — callers should never read them, but they're publicly visible, which is worth knowing before adding new code that constructs or copies `Order` values. |
+| Resting orders now individually heap-allocated instead of living by value inside a container node — Phase 6 step 2, allocation strategy replaced by `OrderPool` in step 4 | Required by the intrusive-list design above: `Order::prev`/`next` are raw pointers to other `Order`s, so a resting order needs a stable address for the lifetime it's linked, which `std::vector`-style relocation can't provide. This is a real ownership-model change from the original §4b row ("book owns resting orders outright... no external aliasing") — still true (no *external* aliasing), but "owns" now means "owns a slot in `pool_`," not "owns a value." Copy-disabled (`OrderBook(const OrderBook&) = delete`), since a shallow copy would let both books' nodes alias the same pool — move is still fine (nothing points back at the `OrderBook` itself). Verified leak/UB-free via a `-fsanitize=address,undefined` debug build across the full test suite at both the plain-`new`/`delete` (step 2) and pooled (step 4) stages. |
+| `OrderPool` (`include/orderbook/order_pool.hpp`) — bump allocator over `std::unique_ptr<Order[]>` chunks (4096 nodes each) with an intrusive free list reusing `Order::next` as the link — Phase 6 step 4 | Replaces step 2's per-order `new`/`delete`, which measured as a real regression (§7) versus step 1's array-only baseline — allocator variance (lock contention, free-list search, page faults on chunk growth) was showing up directly in tail latency. A bump/free-list pool turns acquire/release into pointer arithmetic off the hot path; chunk growth is the only remaining `unique_ptr`-driven allocation, and it's rare (one per 4096 orders — under 50 for the full AAPL trading day used in benchmarking). Simplified `OrderBook` too: since the pool's chunks own all node memory, `~OrderBook()`'s manual per-order-`delete` walk (added in step 2) was removed in favor of `= default` — chunk teardown frees everything. Pool doesn't track which nodes are live (`OrderBook` still does, via `index_` and the per-level lists) — same "container manages links/slots, not lifetime" split as `IntrusiveOrderList` not owning memory either. |
+| `Order` given `alignas(64)`, growing it from 48 to 64 bytes — Phase 6 step 5, kept despite measuring flat-to-slightly-worse | Guarantees every order occupies exactly one cache line inside `OrderPool`'s contiguous chunks rather than straddling two at some array offsets. Measured ~22.1-22.8M → ~21.4-22.0M msg/s (§7) — the larger per-order footprint costs more in this single-threaded, few-orders-per-message workload than the straddle-avoidance saves, and "reduce false sharing" (the step's other stated goal) has no target without concurrent access to `Order`. Left in rather than reverted: Phase 6's purpose was measuring each candidate honestly against the baseline, not cherry-picking wins, and the technique would plausibly pay off in a multi-threaded fan-out variant of this book — noted as a limitation, not silently dropped. |
 
 ---
 
@@ -274,6 +296,11 @@ Decide before Phase 5 and hold it constant, or the table means nothing.
 | Step | Change | Throughput | Overall p50 | Overall p99 | Overall p99.9 |
 |---|---|---|---|---|---|
 | 0 (baseline) | Naive `std::map<Price, std::deque<Order>>`, linear order-ID scan for cancel/reduce | ~660–710k msg/s | 125 ns | 7.5–9.9 µs | 14–32 µs |
+| 1 (O(1) cancel) | `std::deque<Order>` → `std::list<Order>` per price level (stable iterators) + `unordered_map<OrderId, {side, price, iterator}> index_`; `cancel()`/`reduce()`/`execute()`'s resting-order removal now look up the index instead of scanning every level/order | ~15.5–16.1M msg/s | 42 ns | 125 ns | 375–416 ns |
+| 2 (array-indexed price levels) | `std::map<Price, OrderList>` → `PriceLevelArray<Descending>` (`include/orderbook/price_level_array.hpp`): flat `std::vector<OrderList>` indexed by `price - base_`, grown on demand, with a tracked best-occupied cursor replacing tree-ordered iteration | ~21.3–22.1M msg/s | 41 ns | 84 ns | 250–500 ns |
+| 3 (intrusive linked lists) | `std::list<Order>` → `IntrusiveOrderList` (`include/orderbook/intrusive_order_list.hpp`): orders link via their own `Order::prev`/`next`, each resting order individually heap-allocated (plain `new`/`delete`) instead of living inside a container-owned node | ~19.5–20.7M msg/s | 41 ns | 84 ns | 333–792 ns |
+| 4 (memory pool) | `OrderPool` (`include/orderbook/order_pool.hpp`): bump-allocates `Order` nodes out of 4096-node chunks, recycles released ones via an intrusive free list (reusing `Order::next`) — replaces step 3's per-order `new`/`delete` with O(1) acquire/release off the hot path | ~22.1–22.8M msg/s | 41 ns | 83–84 ns | 167–209 ns |
+| 5 (cache alignment) | `struct alignas(64) Order` (`order.hpp`): pads `Order` from 48 to 64 bytes so every order occupies exactly one cache line in `OrderPool`'s contiguous chunks, instead of straddling two | ~21.4–22.0M msg/s | 41 ns | 84 ns | 167 ns |
 
 Per-event-type breakdown at baseline (this is what motivates Phase 6's optimization order):
 
@@ -285,6 +312,27 @@ Per-event-type breakdown at baseline (this is what motivates Phase 6's optimizat
 | ExecuteVisible (`reduce`) | ~3.1 µs | ~12–15 µs | ~28–48 µs |
 
 `add()` is ~50-60x faster than `cancel()`/`reduce()` at p50: `add()` only pays for a `map` insert at a price that's usually already near the top of book, while `cancel()`/`reduce()` do a linear scan across every price level and every order within it to find an order by ID — there's no order-ID index yet. This is exactly the gap Phase 6 step 3 ("O(1) cancel — hash map from order ID directly to the order's node") targets, and this baseline is the number that optimization needs to beat.
+
+Per-event-type breakdown after step 1 (O(1) cancel):
+
+| Event type | p50 | p99 | p99.9 |
+|---|---|---|---|
+| New (`add`) | 42 ns | ~166–167 ns | 542–583 ns |
+| PartialCancel (`reduce`) | 0 ns | ~42 ns | 42–84 ns |
+| Delete (`cancel`) | 42 ns | ~84 ns | 166–167 ns |
+| ExecuteVisible (`reduce`) | 42 ns | ~125 ns | ~125–167 ns |
+
+`cancel()`/`reduce()` p50 drops from ~2.3–3.1 µs to the noise floor of the timer (0–42 ns) — the linear scan is gone, replaced by an `unordered_map` lookup plus an O(1) list erase. `add()` is essentially unchanged, as expected: step 1 targeted the scan, not level lookup (that's array-indexed price levels, still step 1 in SPEC.md's originally-listed order, deferred). Tail latencies (p99/p99.9) across all event types collapsed by roughly 20-100x too, since the old worst case (scanning deep into a large, stale price level) no longer exists.
+
+Full test suite (`ctest --test-dir build`, including LOBSTER snapshot-diff replay) still passes at 38/38 after this change — see SPEC.md §6.
+
+Step 2 (array-indexed price levels) moves the needle less than step 1 did — expected, since `New`/`Delete`/`ExecuteVisible` p50 were already sitting near the timer's noise floor (0-42ns) after step 1, so there wasn't much p50 headroom left for a level-lookup optimization to reclaim. The gain shows up in throughput (~15.5-16.1M → ~21.3-22.1M msg/s) and tail latency (overall p99 125ns → 84ns, p99.9 375-416ns → 250-500ns) — consistent with removing red-black-tree pointer-chasing from `add()`'s level lookup and `execute()`'s best-price walk, both of which matter more for tail behavior than for an already-fast median. Full test suite still 38/38; full-day invariant replay still 0 violations.
+
+**Step 3 (intrusive linked lists) is a small, honest regression**, not an improvement: throughput ~21.3-22.1M → ~19.5-20.7M msg/s, p99.9 250-500ns → 333-792ns, both confirmed stable across 5+ repeated runs (not noise). The reason: this step traded `std::list<Order>`'s allocator-managed nodes for individually heap-allocated `Order` nodes via plain `new`/`delete` per `add()`/`cancel()`/`reduce()`-to-zero/`execute()`-fill — and `std::list`'s allocator was *already* doing effectively the same one-allocation-per-node work, so removing the "container wrapper" indirection bought nothing, while the raw `new`/`delete` calls (no pooling yet) are exposed directly on the hot path with no offsetting win. This is exactly the gap step 4 (memory pool) is meant to close — pre-allocating nodes should recover this regression and then some, since the pool amortizes the allocation cost this step introduced. Kept as its own row rather than silently folded into step 4's benchmark, per SPEC.md's "one optimization at a time" rule and Phase 7's honesty requirement: the array step's win shouldn't be allowed to mask this step's loss in the final table. Full test suite still 38/38 (including a debug ASan+UBSan build — `-fsanitize=address,undefined` — to check the new manual heap-node lifetime for leaks/use-after-free; clean). Full-day invariant replay still 0 violations.
+
+**Step 4 (memory pool) recovers step 3's regression and then some**: ~19.5-20.7M → ~22.1-22.8M msg/s — the best throughput of any step so far, edging out even step 2's array-only number. More strikingly, it's also by far the most *stable* result in the whole table: p99.9 sits in a tight 167-209ns band across 5 repeated runs, versus 250-500ns (step 2) and 333-792ns (step 3) — the wide run-to-run swings in earlier steps were `malloc`/`free`'s own variance (allocator lock contention, free-list search, page faults on growth) showing up in the tail; a bump allocator with an O(1) intrusive free list has none of that. This confirms the step 3 regression's diagnosis was right: it was allocation overhead, not the intrusive-pointer design itself, and pooling — not reverting to `std::list` — was the correct fix. `OrderBook` simplified too: since `OrderPool`'s `std::unique_ptr<Order[]>` chunks now own all node memory, the manual per-order `delete`-walking destructor step 3 added is gone (`~OrderBook() = default` — chunk teardown frees everything). Full test suite still 38/38 including ASan+UBSan; full-day invariant replay still 0 violations.
+
+**Step 5 (cache alignment) shows no measurable benefit here — a flat-to-slightly-worse result**: ~22.1-22.8M → ~21.4-22.0M msg/s, confirmed stable (not noise) across 8 repeated runs; p50/p99/p99.9 essentially unchanged. Recorded honestly rather than reframed as a win, per Phase 7's honesty requirement. Two reasons this optimization doesn't pay off in this codebase: (1) "reduce false sharing" — half the step's stated goal (SPEC.md §3) — has no target to hit, since this is a single-threaded matching engine with no concurrent access to `Order` from different cores; false sharing is a multi-threaded phenomenon by definition. (2) "align to cache lines" still applies in principle (avoiding an order straddling two 64-byte lines), but `Order` was already 48 bytes before this change — mostly, though not always, fitting in one line — and padding it to 64 is a 33% larger memory footprint for every resting order, which increases the total bytes `OrderPool`'s chunks and the LOBSTER replay's working set touch. For this workload (each message reads/writes only 1-2 orders, not long sequential scans across many), the memory-traffic cost of the padding outweighs the occasional-straddle savings it buys. The general technique isn't wrong — it's a legitimate win in workloads with true cross-core contention or large sequential per-order scans — it just doesn't match this project's access pattern. Left in the codebase as the final table row rather than reverted, since the point of Phase 6 was measuring each candidate honestly, not cherry-picking wins; a real limit-order-book implementation with multi-threaded market-data fan-out is exactly where this would start to matter, and that's noted in Phase 7's limitations section (§ to be written). Full test suite still 38/38 including ASan+UBSan; full-day invariant replay still 0 violations.
 
 ---
 
