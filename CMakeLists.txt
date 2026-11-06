@@ -32,13 +32,33 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # dependency code (which you don't control) turning into a hard failure.
 add_compile_options(-Wall -Wextra -Wpedantic)
 
+# Tests and tools are only built when this is the top-level project (or when
+# explicitly requested), so consuming this repo via add_subdirectory(),
+# a git submodule, or FetchContent doesn't pull in GoogleTest or collide with
+# the consumer's own test setup. (PROJECT_IS_TOP_LEVEL needs CMake 3.21; this
+# equivalent check works with the 3.20 minimum.)
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    set(ORDERBOOK_IS_TOP_LEVEL ON)
+else()
+    set(ORDERBOOK_IS_TOP_LEVEL OFF)
+endif()
+
+option(ORDERBOOK_BUILD_TESTS "Build orderbook unit tests" ${ORDERBOOK_IS_TOP_LEVEL})
+option(ORDERBOOK_BUILD_TOOLS "Build orderbook CLI tools (replay, benchmark)" ${ORDERBOOK_IS_TOP_LEVEL})
+
 # Enables `ctest` and the CTest integration that GoogleTest's
 # gtest_discover_tests() (used in tests/CMakeLists.txt) relies on.
-enable_testing()
+if(ORDERBOOK_BUILD_TESTS)
+    enable_testing()
+endif()
 
 # Each subdirectory owns its own target definitions — keeps this top-level
 # file as a small, stable "policy" file (standard, warnings, subdirs) rather
 # than growing target-specific logic here.
 add_subdirectory(src)
-add_subdirectory(tests)
-add_subdirectory(tools)
+if(ORDERBOOK_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
+if(ORDERBOOK_BUILD_TOOLS)
+    add_subdirectory(tools)
+endif()

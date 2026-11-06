@@ -14,7 +14,7 @@ add_library(orderbook STATIC
 # with INTERFACE it would only apply to consumers, and orderbook.cpp's own
 # #include "orderbook/orderbook.hpp" would fail to resolve.
 target_include_directories(orderbook PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 
 target_compile_features(orderbook PUBLIC cxx_std_20)
